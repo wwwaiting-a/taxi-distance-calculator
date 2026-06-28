@@ -15,19 +15,39 @@
     │  VehicleNum, Stime, Lng, Lat, OpenStatus, Speed
     │
     ▼
-[行程提取] 按车辆分组 → 检测乘客上下车事件
-    │  OpenStatus: 0→1 乘客上车（起点）
-    │  OpenStatus: 1→0 乘客下车（终点）
+[行程提取] trip_pair_filter.py  栈算法严格配对
+    │  OpenStatus 0→1: 入栈（上车点）
+    │  OpenStatus 1→0: 出栈配对（下车点）
+    │  若首条记录为 1：初始载客段忽略（上车点不可知）
+    │  输出：taxi_trip_clean_paired_trips.csv
     │
     ▼
-[距离计算] 起点/终点经纬度 → OSRM HTTP API
+[距离计算] trip_osrm_distance.py  调用 OSRM HTTP API
     │  GET /route/v1/driving/{lng},{lat};{lng},{lat}
     │  多线程并发请求
+    │  输出：taxi_trip_clean_paired_trips_trip_distances.csv
     │
     ▼
-[结果输出] CSV 文件
-       trip_id, 起终点坐标, 距离(km), 耗时(min)
+[结果验证] validate_trip_pairing.py  校验配对正确性
+    │  用栈算法重建预期配对，与距离文件逐条比对
+    │  报告: 缺失、冗余、偏移等配对异常
 ```
+
+### 行程提取算法：栈配对
+
+不同于简单的「按索引一一对应」，本工具使用**栈（Stack）**算法确保上下车事件的严格配对：
+
+```
+遍历每辆车的 GPS 记录（按时间排序）：
+  - OpenStatus 0→1 转换 → 上车点，入栈
+  - OpenStatus 1→0 转换 → 下车点，从栈中弹出最近的上车点配对
+  - 车辆首条记录若为 1（载客中）→ 不处理，初始上车点不可知
+```
+
+这样能正确处理以下边界情况：
+- 车辆数据窗口起始时已在载客状态（首条 OpenStatus=1）
+- 连续多条记录保持同一状态（取转换边界，不重复配对）
+- 车辆最后一段行程未下车（栈中剩余，单独报告）
 
 ### 技术栈
 
@@ -94,7 +114,7 @@ docker --version
 从 Geofabrik 下载广东省地图数据：
 
 ```bash
-cd /home/hadoop/program/map_ShenZhen/OSRM_Tool
+cd /home/hadoop/Shenzhen_map_tool/OSRM_Tool
 mkdir -p map_data
 wget -O map_data/guangdong-latest.osm.pbf https://download.geofabrik.de/asia/china/guangdong-latest.osm.pbf
 ```
@@ -112,7 +132,7 @@ wget -O map_data/guangdong-latest.osm.pbf https://download.geofabrik.de/asia/chi
 5. 发送测试请求验证服务可用
 
 ```bash
-cd /home/hadoop/program/map_ShenZhen/OSRM_Tool
+cd /home/hadoop/Shenzhen_map_tool/OSRM_Tool
 bash deploy_osrm.sh
 ```
 
@@ -165,25 +185,49 @@ Test route: Futian Station -> Luohu Station
 ### 第四步：安装 Python 依赖
 
 ```bash
-cd /home/hadoop/program/map_ShenZhen/OSRM_Tool
+cd /home/hadoop/Shenzhen_map_tool/OSRM_Tool
 pip install -r requirements.txt
 ```
 
-### 第五步：运行距离计算
+### 第五步：运行距离计算（两步）
+
+计算分两步进行，中间文件可独立校验：
 
 ```bash
-python3 taxi_trip_distance.py taxi_trip_clean.csv --workers 10
+# 步骤 1：栈算法严格提取配对行程
+python3 trip_pair_filter.py taxi_trip_clean.csv
+# 输出 → taxi_trip_clean_paired_trips.csv
+
+# 步骤 2：调用 OSRM 计算每段行程距离
+python3 trip_osrm_distance.py taxi_trip_clean_paired_trips.csv --workers 10
+# 输出 → taxi_trip_clean_paired_trips_trip_distances.csv
 ```
 
 参数说明：
 
+**trip_pair_filter.py**
+
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `csv_file` | （必填） | 出租车 GPS 轨迹 CSV 文件路径 |
+| `--output` | 自动生成 | 输出 CSV 文件名 |
+
+**trip_osrm_distance.py**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `csv_file` | （必填） | 配对行程 CSV 文件路径 |
 | `--host` | `localhost` | OSRM 服务地址 |
 | `--port` | `5000` | OSRM 服务端口 |
 | `--output` | 自动生成 | 输出 CSV 文件名 |
 | `--workers` | `5` | 并发线程数 |
+
+### 第六步：验证配对结果（可选）
+
+```bash
+# 验证距离文件中的配对是否与栈算法预期一致
+python3 validate_trip_pairing.py
+```
 
 ### 服务管理
 
@@ -208,7 +252,17 @@ docker restart osrm-guangdong    # 重启服务
 | `OpenStatus` | 载客状态（0=空车，1=载客） |
 | `Speed` | 瞬时速度 |
 
-### 输出格式（trip_distances.csv）
+### 中间输出格式（paired_trips.csv）
+
+| 字段 | 说明 |
+|------|------|
+| `trip_id` | 行程编号 |
+| `VehicleNum` | 车辆编号 |
+| `start_time` / `end_time` | 行程起止时间 |
+| `start_lng` / `start_lat` | 起点经纬度（上车点） |
+| `end_lng` / `end_lat` | 终点经纬度（下车点） |
+
+### 最终输出格式（trip_distances.csv）
 
 | 字段 | 说明 |
 |------|------|
@@ -226,10 +280,15 @@ docker restart osrm-guangdong    # 重启服务
 
 | 文件 | 说明 |
 |------|------|
-| `taxi_trip_distance.py` | 主程序：行程提取 + OSRM 距离计算 |
+| `trip_pair_filter.py` | 第一步：栈算法严格提取配对行程，输出配对 CSV |
+| `trip_osrm_distance.py` | 第二步：读取配对 CSV，调用 OSRM 计算驾车距离 |
+| `validate_trip_pairing.py` | 验证脚本：用栈算法校验距离文件的配对正确性 |
+| `taxi_trip_distance.py` | 旧版脚本（一步完成，有配对 bug，保留作为参考） |
 | `deploy_osrm.sh` | OSRM 一键部署脚本 |
 | `requirements.txt` | Python 依赖 |
-| `taxi_trip_clean.csv` | 示例输入：出租车 GPS 轨迹数据 |
+| `taxi_trip_clean.csv` | 输入数据：出租车 GPS 轨迹 |
+| `taxi_trip_clean_paired_trips.csv` | 中间结果：严格配对后的行程起止点 |
+| `taxi_trip_clean_paired_trips_trip_distances.csv` | 最终结果：含驾车距离的行程数据 |
 | `map_data/` | 地图数据目录（.osm.pbf + 预处理后的 .osrm.* 文件） |
 
 ## FAQ
