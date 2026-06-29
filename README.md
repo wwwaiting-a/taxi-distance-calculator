@@ -93,14 +93,6 @@ sudo yum install -y docker-ce docker-ce-cli containerd.io
 sudo systemctl start docker
 sudo systemctl enable docker
 
-# Ubuntu
-sudo apt update
-sudo apt install -y ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io
 ```
 
 验证安装：
@@ -145,7 +137,8 @@ bash deploy_osrm.sh
 
 ```bash
 # 1. 拉取镜像
-docker pull osrm/osrm-backend:latest
+docker pull --platform linux/amd64 ghcr.io/project-osrm/osrm-backend:latest
+docker tag ghcr.io/project-osrm/osrm-backend:latest osrm/osrm-backend:latest
 
 # 2. 地图预处理
 docker run --rm -t -v $(pwd)/map_data:/data \
