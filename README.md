@@ -112,6 +112,7 @@ wget -O map_data/guangdong-latest.osm.pbf https://download.geofabrik.de/asia/chi
 ```
 
 > 文件约 160MB，下载时间取决于网络状况。如果下载缓慢，也可以从其他镜像源获取 `.osm.pbf` 格式的地图文件后放入 `map_data/` 目录。
+另一个已验证过的下载源是： https://download.geofabrik.de/asia/china.html 进入网站下载 guangdong-latest.osm.pbf
 
 ### 第三步：一键部署 OSRM 服务
 
